@@ -21,6 +21,7 @@ import { DEFAULT_SETTINGS } from './settings.js';
 import type { PublisherSettings } from './settings.js';
 import { emptyRemoteState, fetchRemoteState } from './state/remote.js';
 import type { RemoteState } from './state/remote.js';
+import { hasInFlightWork, nextPollDelay } from './state/postPushPoll.js';
 import { scanVault } from './state/scan.js';
 import type { ScanResult } from './state/scan.js';
 import { buildFileMenu } from './ui/contextMenu.js';
@@ -30,9 +31,7 @@ import { PublisherSettingTab } from './ui/settingsTab.js';
 import { PublishStore } from './vault/store.js';
 import { readFrontmatter } from './vault/frontmatter.js';
 
-/** After a push, poll briefly before returning to the normal cadence (§3.9). */
-const POST_PUSH_POLL_MS = 15_000;
-const POST_PUSH_POLL_COUNT = 12;
+
 
 export default class NotePublisherPlugin extends Plugin {
   /** `Plugin` declares `settings?: unknown`, so this narrows rather than adds. */
@@ -45,6 +44,7 @@ export default class NotePublisherPlugin extends Plugin {
   private statusBar: HTMLElement | null = null;
   private refreshing: Promise<void> | null = null;
   private postPushPolls = 0;
+  private postPushTimer: number | null = null;
 
   override async onload(): Promise<void> {
     await this.loadSettings();
@@ -339,19 +339,47 @@ export default class NotePublisherPlugin extends Plugin {
       refresh: async () => {
         // Following a push, poll on a short interval for a few minutes before
         // returning to the normal cadence (§3.9).
-        this.postPushPolls = POST_PUSH_POLL_COUNT;
+        this.postPushPolls = 0;
         await this.refresh();
         this.schedulePostPushPoll();
       },
     }).open();
   }
 
+  /**
+   * Poll until nothing is waiting on CI, or the backoff runs out.
+   *
+   * Any previously scheduled chain is cancelled first, so pushing twice in
+   * quick succession restarts one schedule rather than compounding two.
+   */
   private schedulePostPushPoll(): void {
-    if (this.postPushPolls <= 0) return;
-    this.postPushPolls--;
-    window.setTimeout(() => {
-      void this.refresh().then(() => this.schedulePostPushPoll());
-    }, POST_PUSH_POLL_MS);
+    if (this.postPushTimer !== null) window.clearTimeout(this.postPushTimer);
+
+    const delay = nextPollDelay(this.postPushPolls);
+    if (delay === null) {
+      this.postPushTimer = null;
+      return;
+    }
+    this.postPushPolls++;
+
+    this.postPushTimer = window.setTimeout(() => {
+      this.postPushTimer = null;
+      void this.refresh().then(() => {
+        // Converged: the build landed and the panel already shows it.
+        if (this.hasInFlightWork()) this.schedulePostPushPoll();
+      });
+    }, delay);
+  }
+
+  /**
+   * True while any note is still waiting on CI.
+   *
+   * `removing` counts: an entry that has to *disappear* is exactly the case
+   * where stopping early leaves the panel showing something that is already
+   * gone from KV.
+   */
+  private hasInFlightWork(): boolean {
+    return hasInFlightWork((this.lastScan?.entries ?? []).map((entry) => entry.status));
   }
 
   // ── refresh ───────────────────────────────────────────────────────────────

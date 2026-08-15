@@ -12,6 +12,12 @@ import { Actions } from '../packages/plugin/src/actions.js';
 import { DEFAULT_SETTINGS } from '../packages/plugin/src/settings.js';
 import type { PublisherSettings } from '../packages/plugin/src/settings.js';
 import { PublishStore } from '../packages/plugin/src/vault/store.js';
+import {
+  POST_PUSH_BACKOFF_MS,
+  hasInFlightWork,
+  nextPollDelay,
+  pollWindowMs,
+} from '../packages/plugin/src/state/postPushPoll.js';
 import { actionsFor } from '../packages/plugin/src/ui/panel.js';
 import type { NoteEntry, ScanResult } from '../packages/plugin/src/state/scan.js';
 import { Notice } from './harness/obsidian.js';
@@ -288,5 +294,54 @@ describe('the root manifest BRAT reads stays in step with the plugin', () => {
       const path = fileURLToPath(new URL(`../packages/plugin/${asset}`, import.meta.url));
       expect((await stat(path)).size, `${asset} is empty or missing`).toBeGreaterThan(0);
     }
+  });
+});
+
+/**
+ * After a push the panel polls until CI answers (§3.9). The previous schedule
+ * was twelve fixed 15s polls — three minutes, unconditional — which expires
+ * before a realistic queue plus build, and with `refreshIntervalMinutes`
+ * defaulting to 0 nothing refreshed afterwards. The panel then held a stale
+ * view until reopened.
+ */
+describe('post-push polling waits long enough, and stops when it should', () => {
+  it('covers a realistic queue plus build, not the old three minutes', () => {
+    const minutes = pollWindowMs() / 60_000;
+    expect(minutes).toBeGreaterThan(8);
+    // A measured build is ~1 minute; the old window was 3. Anything under ~8
+    // is back to giving up before a queued build lands.
+    expect(minutes).toBeLessThanOrEqual(15);
+  });
+
+  it('checks quickly at first, then backs off', () => {
+    expect(POST_PUSH_BACKOFF_MS[0]).toBeLessThanOrEqual(5_000);
+    for (let i = 1; i < POST_PUSH_BACKOFF_MS.length; i++) {
+      expect(POST_PUSH_BACKOFF_MS[i]!).toBeGreaterThanOrEqual(POST_PUSH_BACKOFF_MS[i - 1]!);
+    }
+  });
+
+  it('runs out rather than polling forever', () => {
+    expect(nextPollDelay(0)).not.toBeNull();
+    expect(nextPollDelay(POST_PUSH_BACKOFF_MS.length - 1)).not.toBeNull();
+    expect(nextPollDelay(POST_PUSH_BACKOFF_MS.length)).toBeNull();
+  });
+
+  it('keeps polling while a note is building', () => {
+    expect(hasInFlightWork(['live', 'building'])).toBe(true);
+  });
+
+  it('keeps polling while a removal is outstanding', () => {
+    // The regression that motivated this: a removal has to make the entry
+    // *disappear*, so stopping early leaves the panel showing a note that KV
+    // has already dropped — and nothing on screen suggests it stopped looking.
+    expect(hasInFlightWork(['removing'])).toBe(true);
+  });
+
+  it('stops once everything has settled', () => {
+    expect(hasInFlightWork([])).toBe(false);
+    expect(hasInFlightWork(['live', 'live'])).toBe(false);
+    // Staged work is waiting on the *user*, not on CI, so it must not keep the
+    // poll alive — that would poll forever on any vault with a staged note.
+    expect(hasInFlightWork(['staged', 'stale', 'unstaged'])).toBe(false);
   });
 });
