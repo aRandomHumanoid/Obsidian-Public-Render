@@ -21,10 +21,23 @@ import { JSDOM } from 'jsdom';
 
 let purifier: ReturnType<typeof createDOMPurify> | null = null;
 
+/**
+ * JSDOM's window is structurally a DOM window but not nominally the `Window`
+ * TypeScript's DOM lib describes, so it needs a cast either way.
+ *
+ * The cast targets DOMPurify's *own* parameter type rather than
+ * `Window & typeof globalThis`. That matters because `WindowLike` requires
+ * `trustedTypes`, which only exists once `@types/trusted-types` is installed —
+ * and `dompurify` declares it as an **optional** dependency. CI installs with
+ * `--omit=optional` (§13: a vault with no diagrams should not pay for a
+ * Chromium download), so naming the DOM type there typechecks on a developer
+ * machine and fails on the runner. Deferring to `Parameters<…>` means whatever
+ * DOMPurify asks for is what it gets, present or absent.
+ */
 function getPurifier(): ReturnType<typeof createDOMPurify> {
   if (purifier) return purifier;
   const window = new JSDOM('').window;
-  purifier = createDOMPurify(window as unknown as Window & typeof globalThis);
+  purifier = createDOMPurify(window as unknown as Parameters<typeof createDOMPurify>[0]);
   return purifier;
 }
 

@@ -23,7 +23,26 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - run: npm ci --omit=optional
+      # NOT `--omit=optional`. The intent was to skip `@mermaid-js/mermaid-cli`
+      # and its Chromium download (§13), but the flag is far too blunt: it also
+      # drops `@rollup/rollup-linux-x64-gnu`, without which vitest cannot start
+      # at all, and `@types/trusted-types`, without which `dompurify`'s
+      # `WindowLike` does not typecheck. CI had never once been green because
+      # of it — the typecheck failed first and hid the broken test runner
+      # behind it.
+      #
+      # Skipping just the browser download gets the intended saving without
+      # removing packages the build genuinely needs. The one mermaid test is
+      # opt-in behind MERMAID_E2E anyway, so it stays skipped either way.
+      - run: npm ci
+        env:
+          PUPPETEER_SKIP_DOWNLOAD: 'true'
+          PUPPETEER_SKIP_CHROMIUM_DOWNLOAD: 'true'
       - run: npm run typecheck
       - run: npm run build
       - run: npm test
+      # The root manifest.json and versions.json are generated (§ BRAT). If a
+      # build regenerates them differently from what was committed, the release
+      # would advertise a version the repository does not agree with.
+      - name: Check generated files are committed
+        run: git diff --exit-code -- manifest.json versions.json
