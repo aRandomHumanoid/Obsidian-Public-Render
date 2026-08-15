@@ -35,13 +35,37 @@ import type { StagedMetadata } from './types.js';
  */
 export function frontmatterParseError(md: string): string | null {
   const { frontmatter } = splitFrontmatter(md);
-  if (frontmatter === null || frontmatter.trim() === '') return null;
+
+  // A document that *opens* a block but has no closing delimiter at column 0
+  // is not "no frontmatter" — it is a block whose end we could not find, and
+  // `splitFrontmatter` hands the whole thing back as body, so every key in it
+  // publishes. Requiring the delimiter at column 0 (see markdown.ts) made this
+  // reachable in one more way than before: a block closed only by an *indented*
+  // `---` used to split there and now does not. Both shapes end up here.
+  if (frontmatter === null) {
+    return opensFrontmatter(md)
+      ? 'the document opens a frontmatter block that is never closed by `---` at the start of a line'
+      : null;
+  }
+
+  if (frontmatter.trim() === '') return null;
   try {
     parseYaml(frontmatter);
     return null;
   } catch (err) {
     return (err as Error).message.split('\n')[0] ?? 'invalid YAML';
   }
+}
+
+/**
+ * Whether a document opens a frontmatter block, by the same test
+ * `splitFrontmatter` uses to decide there is one to look for.
+ */
+function opensFrontmatter(md: string): boolean {
+  if (!md.startsWith('---')) return false;
+  const firstLineEnd = md.indexOf('\n');
+  if (firstLineEnd === -1) return false;
+  return md.slice(0, firstLineEnd).trim() === '---';
 }
 
 export class StagedFileError extends Error {

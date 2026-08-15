@@ -23,7 +23,12 @@
 
 import { fileURLToPath } from 'node:url';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { assertFrontmatterAllowlist, runCriticalAssertions, splitFrontmatter } from '@notes/shared';
+import {
+  assertFrontmatterAllowlist,
+  frontmatterParseError,
+  runCriticalAssertions,
+  splitFrontmatter,
+} from '@notes/shared';
 import { CriticalAssertionError } from '@notes/shared';
 import { stripComments } from '../packages/plugin/src/staging/strip.js';
 import { stageNote } from '../packages/plugin/src/staging/pipeline.js';
@@ -488,6 +493,35 @@ describe('private frontmatter never reaches staged output', () => {
     expect(staged.contents).not.toContain('Acme Corporation');
     expect(staged.contents).not.toContain('Target body.');
     expect(staged.dropped.some((d) => d.reason === 'unpublished')).toBe(true);
+  });
+
+  it('refuses a block that opens but never closes at column 0', async () => {
+    // Two shapes reach this, and one of them is self-inflicted: requiring the
+    // closing delimiter at column 0 means a block closed only by an *indented*
+    // `---` no longer splits there, so it falls through to "unterminated" and
+    // `splitFrontmatter` hands the whole document back as body — publishing
+    // every key in it. The other shape, a block with no closing delimiter at
+    // all, behaved that way before the change too. Both fail closed now.
+    for (const [name, lines] of [
+      ['indented close', ['---', 'publish: true', 'share_id: q9q9q9q9q9q9q9q9', 'client: Acme Corporation', '  ---', '', '# Note', '', 'Body.']],
+      ['no close', ['---', 'publish: true', 'share_id: q8q8q8q8q8q8q8q8', 'client: Acme Corporation', '', '# Note', '', 'Body.']],
+    ] as [string, string[]][]) {
+      const id = name === 'indented close' ? 'q9q9q9q9q9q9q9q9' : 'q8q8q8q8q8q8q8q8';
+      vault.addNote(`${id}.md`, lines.join('\n'));
+      const staged = await stage(`${id}.md`, id, 'Note');
+      expect(
+        staged.issues.some((i) => i.severity === 'error' && i.code === 'frontmatter-unparseable'),
+        `${name}: expected a blocking error`,
+      ).toBe(true);
+    }
+  });
+
+  it('does not flag a document with no frontmatter at all', () => {
+    // The guard keys off a block being *opened*, so an ordinary note that
+    // simply has no properties must stay stageable.
+    expect(frontmatterParseError('# Just a note\n\nBody.')).toBeNull();
+    expect(frontmatterParseError('')).toBeNull();
+    expect(frontmatterParseError('---\ntitle: fine\n---\n\nBody.')).toBeNull();
   });
 
   it('closes frontmatter only on a column-0 delimiter', () => {
