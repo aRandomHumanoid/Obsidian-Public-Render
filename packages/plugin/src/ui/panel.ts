@@ -290,6 +290,29 @@ export class PublishPanel extends ItemView {
       }
     }
 
+    // The one way a published page goes wrong without its own note changing:
+    // unpublish A, and every note linking to A keeps a `/n/<A>` link that now
+    // 404s. Stale cannot see it, because Stale compares this note's own source
+    // hash and removing a different note does not touch that — so without this
+    // the page stays broken with nothing on screen saying so.
+    if (entry.danglingLinks.length > 0) {
+      const count = entry.danglingLinks.length;
+      const box = detail.createDiv({ cls: 'np-dangling' });
+      box.createDiv({
+        cls: 'np-dangling-head',
+        text:
+          `⚠ ${count} link${count === 1 ? '' : 's'} to ${count === 1 ? 'a page' : 'pages'} that ` +
+          `${count === 1 ? 'is' : 'are'} no longer published`,
+      });
+      box.createDiv({
+        cls: 'np-dangling-note',
+        text: 'The live page still points at these. Re-stage and push to drop them.',
+      });
+      for (const id of entry.danglingLinks) {
+        box.createDiv({ cls: 'np-dangling-item', text: `/n/${id} — 404` });
+      }
+    }
+
     const contents =
       (await this.deps.store.readPending(entry.shareId)) ??
       (await this.deps.store.readPublished(entry.shareId));

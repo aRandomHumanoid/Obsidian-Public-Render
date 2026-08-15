@@ -169,6 +169,35 @@ export function parseStagedFile(raw: string, file?: string): ParsedStagedFile {
  * does. §5.3 fails the build when a referenced asset is missing from
  * `_assets/`.
  */
+/**
+ * `share_id`s this staged body links to, via the `/n/<id>` form that §3.7
+ * step 3 rewrites published wikilinks into.
+ *
+ * Exists to catch the one way a published page goes wrong without its own note
+ * changing: unpublish A, and every note linking to A keeps a `/n/<A>` link that
+ * now 404s. Stale cannot see it — Stale compares a note's *own* source hash,
+ * and removing a different note does not touch that — so nothing prompts the
+ * re-stage that would fix it. §1 ranks seeing exactly what is public second,
+ * and this is a case where you could not.
+ *
+ * Deliberately scans the staged artifact rather than vault sources: the
+ * question is what the *published page* points at, which is only answerable
+ * from what was published. Anchors and the `.md` download suffix are stripped
+ * so `/n/<id>#heading` and `/n/<id>.md` both count as the same target.
+ */
+export function extractNoteLinks(body: string): string[] {
+  const found = new Set<string>();
+  // Markdown links, HTML hrefs, and bare occurrences alike — a published link
+  // is `/n/<id>` however it is spelled, and over-collecting here only risks a
+  // false "dangling" report, which is visible and harmless, where
+  // under-collecting silently misses a dead link.
+  for (const m of body.matchAll(/\/n\/([0-9a-hjkmnp-tv-z]{16})/g)) {
+    const id = m[1];
+    if (id) found.add(id);
+  }
+  return [...found].sort();
+}
+
 export function extractAssetReferences(body: string): string[] {
   const found = new Set<string>();
   // Markdown images and links pointing into the local asset directory. The

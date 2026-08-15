@@ -21,6 +21,7 @@ import {
   parseStagedFile,
   serializeStagedFile,
   sourceHash,
+  extractNoteLinks,
   splitFrontmatter,
   stagedHash,
   timingSafeEqual,
@@ -266,5 +267,32 @@ describe('the three critical assertions (§11.2)', () => {
     const failures = assertFrontmatterAllowlist('---\nkey: [unclosed\n---\n\nBody.');
     expect(failures).toHaveLength(1);
     expect(failures[0]?.code).toBe('frontmatter-leak');
+  });
+});
+
+describe('extractNoteLinks — finding /n/<id> targets in a staged body (§3.4)', () => {
+  const ID_A = '7k2m9x4qp8vw3n6r';
+  const ID_B = '9v3n6r7k2m9x4qp8';
+
+  it('finds markdown links, anchors and download suffixes as one target each', () => {
+    const body = [
+      `See [A](/n/${ID_A}) and [heading](/n/${ID_A}#some-heading).`,
+      `Download [B](/n/${ID_B}.md).`,
+      `<a href="/n/${ID_B}">html</a>`,
+    ].join('\n');
+    expect(extractNoteLinks(body)).toEqual([ID_A, ID_B].sort());
+  });
+
+  it('ignores things that only look like share ids', () => {
+    // `i`, `l`, `o` and `u` are absent from Crockford base32, so an id
+    // containing one is not a share id and must not be reported as dangling.
+    expect(extractNoteLinks('/n/iiiiiiiiiiiiiiii')).toEqual([]);
+    expect(extractNoteLinks('/n/short')).toEqual([]);
+    expect(extractNoteLinks('/notes/7k2m9x4qp8vw3n6r')).toEqual([]);
+    expect(extractNoteLinks('no links here')).toEqual([]);
+  });
+
+  it('deduplicates repeated links to the same page', () => {
+    expect(extractNoteLinks(`/n/${ID_A} /n/${ID_A}#x /n/${ID_A}.md`)).toEqual([ID_A]);
   });
 });

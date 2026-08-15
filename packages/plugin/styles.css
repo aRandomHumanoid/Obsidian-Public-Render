@@ -224,6 +224,34 @@
   font-size: var(--font-ui-smaller);
 }
 
+/* A live page pointing at pages that no longer exist. Red rather than yellow:
+   the dropped-links box above describes what staging *did*, which is working
+   as designed; this one describes a page that is currently broken. */
+.note-publisher-panel .np-dangling {
+  margin: var(--size-4-4) 0;
+  padding: var(--size-4-3);
+  border-radius: var(--radius-s);
+  border-left: 3px solid var(--color-red);
+  background: var(--background-modifier-hover);
+  font-size: var(--font-ui-small);
+}
+
+.note-publisher-panel .np-dangling-head {
+  font-weight: var(--font-semibold);
+  margin-bottom: var(--size-4-1);
+}
+
+.note-publisher-panel .np-dangling-note {
+  color: var(--text-muted);
+  margin-bottom: var(--size-4-1);
+}
+
+.note-publisher-panel .np-dangling-item {
+  color: var(--text-muted);
+  font-family: var(--font-monospace);
+  font-size: var(--font-ui-smaller);
+}
+
 .note-publisher-panel .np-actions {
   display: flex;
   flex-wrap: wrap;

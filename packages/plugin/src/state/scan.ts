@@ -9,6 +9,7 @@
 
 import {
   deriveStatus,
+  extractNoteLinks,
   parseStagedFile,
   sourceHash,
   stagedHash as hashStaged,
@@ -36,6 +37,14 @@ export interface NoteEntry {
   /** sha256 of whichever local file represents this note. */
   localHash: string | null;
   assets: string[];
+  /**
+   * `share_id`s this note's published copy links to that are no longer part of
+   * the published set, so those `/n/<id>` links now 404 (§3.4).
+   *
+   * Not folded into Stale: the note itself has not changed, and calling it
+   * Stale would misdescribe why it needs re-staging.
+   */
+  danglingLinks: string[];
 }
 
 export interface ScanResult {
@@ -100,6 +109,16 @@ export async function scanVault(deps: ScanDeps): Promise<ScanResult> {
     ...deps.remote.hashes.keys(),
   ]);
 
+  // What the next build will publish: `published/` at this commit, plus work
+  // still pending locally. Stage-for-removal deletes the staged file, so an id
+  // absent from both is one that is going away — or already gone.
+  //
+  // Deliberately not `deps.remote.hashes`: a link is dangling if the *intent*
+  // is that the target stop existing, and that is expressed locally. Using
+  // remote state would also make this need the manifest token and stop working
+  // offline (§3.5).
+  const willBeLive = new Set<string>([...pending.keys(), ...published.keys()]);
+
   const repoPublishedDir = await deps.git.repoRelative(store.publishedDir);
   const entries: NoteEntry[] = [];
 
@@ -154,6 +173,7 @@ export async function scanVault(deps: ScanDeps): Promise<ScanResult> {
       claimants: notes,
       localHash: local?.hash ?? null,
       assets: local?.assets ?? [],
+      danglingLinks: (local?.noteLinks ?? []).filter((id) => !willBeLive.has(id)),
     });
   }
 
@@ -191,6 +211,7 @@ interface LocalFile {
   title: string;
   staged: string;
   assets: string[];
+  noteLinks: string[];
 }
 
 async function readLocal(contents: string | null): Promise<LocalFile | null> {
@@ -203,6 +224,7 @@ async function readLocal(contents: string | null): Promise<LocalFile | null> {
       title: metadata.title,
       staged: metadata.staged,
       assets: extractAssets(body),
+      noteLinks: extractNoteLinks(body),
     };
   } catch {
     // A staged file that does not parse is a real problem, but it is CI's

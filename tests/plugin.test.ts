@@ -12,6 +12,9 @@ import { Actions } from '../packages/plugin/src/actions.js';
 import { DEFAULT_SETTINGS } from '../packages/plugin/src/settings.js';
 import type { PublisherSettings } from '../packages/plugin/src/settings.js';
 import { PublishStore } from '../packages/plugin/src/vault/store.js';
+import { scanVault } from '../packages/plugin/src/state/scan.js';
+import { emptyRemoteState } from '../packages/plugin/src/state/remote.js';
+import type { GitService, GitState } from '../packages/plugin/src/git/service.js';
 import {
   POST_PUSH_BACKOFF_MS,
   hasInFlightWork,
@@ -343,5 +346,93 @@ describe('post-push polling waits long enough, and stops when it should', () => 
     // Staged work is waiting on the *user*, not on CI, so it must not keep the
     // poll alive — that would poll forever on any vault with a staged note.
     expect(hasInFlightWork(['staged', 'stale', 'unstaged'])).toBe(false);
+  });
+});
+
+/**
+ * Unpublishing A leaves every note linking to A with a `/n/<A>` link that now
+ * 404s. Stale cannot see it — Stale compares a note's *own* source hash, and
+ * removing a different note does not touch that — so before this the page
+ * stayed broken with nothing on screen saying so.
+ */
+describe('links to pages that are no longer published (§3.4)', () => {
+  const REMOVED = '7k2m9x4qp8vw3n6r';
+  const LINKER = '9v3n6r7k2m9x4qp8';
+
+  async function scanWith({ keepRemoved }: { keepRemoved: boolean }) {
+    const app = new FakeApp();
+    const settings: PublisherSettings = {
+      ...DEFAULT_SETTINGS,
+      properties: { ...DEFAULT_SETTINGS.properties },
+    };
+    const store = new PublishStore(app.asApp(), settings);
+    await store.ensureDirs();
+
+    // Including the blank line that follows the closing `---`, because that is
+    // what the scan's own frontmatter strip leaves in the body it hashes.
+    const targetSourceBody = '\n# Target\n';
+    const linkerSourceBody = '\n# Linker\n\nSee [[Target]].\n';
+    app.addNote('Notes/Target.md', `---\npublish: true\nshare_id: ${REMOVED}\n---\n${targetSourceBody}`);
+    app.addNote('Notes/Linker.md', `---\npublish: true\nshare_id: ${LINKER}\n---\n${linkerSourceBody}`);
+
+    // `source_hash` covers the *source* body plus allowlisted properties, which
+    // is what the scan recomputes — not the staged body. Matching it here is
+    // what makes the "not Stale" assertion below mean anything.
+    const staged = async (id: string, title: string, sourceBody: string, stagedBody: string) =>
+      serializeStagedFile(
+        {
+          share_id: id,
+          title,
+          source_hash: await sourceHash(sourceBody, {
+            title,
+            indexable: false,
+            download: true,
+          }),
+          staged: '2026-08-02T14:03:11Z',
+          indexable: false,
+          download: true,
+        },
+        stagedBody,
+      );
+
+    // The linker was staged while the target was still published, so its
+    // published copy carries the rewritten `/n/<id>` link.
+    await app.adapter.write(
+      store.publishedPath(LINKER),
+      await staged(LINKER, 'Linker', linkerSourceBody, `# Linker\n\nSee [Target](/n/${REMOVED}).`),
+    );
+    if (keepRemoved) {
+      await app.adapter.write(
+        store.publishedPath(REMOVED),
+        await staged(REMOVED, 'Target', targetSourceBody, '# Target'),
+      );
+    }
+
+    return scanVault({
+      app: app.asApp(),
+      settings,
+      store,
+      git: { repoRelative: async (path: string) => path } as unknown as GitService,
+      gitState: { dirty: new Set<string>(), unpushed: new Set<string>() } as unknown as GitState,
+      remote: emptyRemoteState(),
+    });
+  }
+
+  it('reports nothing while the target is still published', async () => {
+    const scan = await scanWith({ keepRemoved: true });
+    expect(scan.byShareId.get(LINKER)?.danglingLinks).toEqual([]);
+  });
+
+  it('flags the dead link once the target has been staged for removal', async () => {
+    // Stage for removal deletes the staged file, so the id is simply absent.
+    const scan = await scanWith({ keepRemoved: false });
+    expect(scan.byShareId.get(LINKER)?.danglingLinks).toEqual([REMOVED]);
+  });
+
+  it('does not call the linker Stale — its own source has not changed', async () => {
+    const scan = await scanWith({ keepRemoved: false });
+    // This is the whole reason it needs its own warning: "Stale" would
+    // misdescribe why the note has to be re-staged.
+    expect(scan.byShareId.get(LINKER)?.detail.stale).toBe(false);
   });
 });
