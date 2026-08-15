@@ -160,25 +160,35 @@ jobs:
           cache: npm
           cache-dependency-path: .pipeline/package-lock.json
 
-      # §6.3 — `npm ci` against a committed lockfile, minimal dependency
-      # surface, reviewed rather than auto-merged updates.
-      - name: Install
-        working-directory: .pipeline
-        run: npm ci --omit=optional
-
       # Mermaid needs a browser, so it is an optional dependency (see
-      # render/mermaid.ts). Install it only when the corpus actually contains a
-      # diagram; a vault with no diagrams should not pay for a Chromium
-      # download on every build.
-      - name: Install the mermaid renderer if the corpus needs one
+      # render/mermaid.ts). Decide whether this corpus needs one *before*
+      # installing, so the install itself can skip the Chromium download when
+      # there are no diagrams — a vault without them should not pay for it.
+      - name: Does the corpus need the mermaid renderer?
         id: mermaid
         run: |
           if grep -rlq '^```mermaid' published/ 2>/dev/null; then
             echo "needed=true" >> "$GITHUB_OUTPUT"
-            npm install --no-save @mermaid-js/mermaid-cli --prefix .pipeline
           else
             echo "needed=false" >> "$GITHUB_OUTPUT"
           fi
+
+      # §6.3 — `npm ci` against a committed lockfile, minimal dependency
+      # surface, reviewed rather than auto-merged updates.
+      #
+      # NOT `--omit=optional`, which is what this was. The intent was to skip
+      # the mermaid renderer above, but the flag is far too blunt: it also
+      # drops `@rollup/rollup-linux-x64-gnu`, without which vitest cannot start
+      # and the assertion step below dies before collecting a single test, and
+      # `@types/trusted-types`, without which the pipeline does not typecheck.
+      # Skipping only the browser download gets the intended saving without
+      # removing packages the build genuinely needs.
+      - name: Install
+        working-directory: .pipeline
+        run: npm ci
+        env:
+          PUPPETEER_SKIP_DOWNLOAD: ${{ steps.mermaid.outputs.needed == 'true' && 'false' || 'true' }}
+          PUPPETEER_SKIP_CHROMIUM_DOWNLOAD: ${{ steps.mermaid.outputs.needed == 'true' && 'false' || 'true' }}
 
       - name: Build the pipeline
         working-directory: .pipeline
