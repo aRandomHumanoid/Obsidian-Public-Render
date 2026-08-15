@@ -14,6 +14,36 @@ import { PUBLISHED_METADATA_KEYS } from './properties.js';
 import { isShareId } from './shareId.js';
 import type { StagedMetadata } from './types.js';
 
+/**
+ * Why a document's leading frontmatter block cannot be parsed, or `null` when
+ * there is none or it is fine.
+ *
+ * `splitFrontmatter` finds the block boundary by scanning for a column-0
+ * delimiter, which is what YAML and Obsidian both require but is still a scan
+ * rather than a parse. One shape defeats it: a `---` at column 0 inside a
+ * multi-line *quoted* scalar. YAML forbids that — the parser rejects the whole
+ * block — so it can only occur in frontmatter that is already malformed, but
+ * the consequence if it does is severe. The split lands mid-block and every
+ * property after it becomes body text, which publishes.
+ *
+ * The tell is that the *truncated* half does not parse either: cutting
+ * `desc: "line` off from its closing quote leaves invalid YAML. So a caller
+ * that is about to treat everything after the split as publishable body can
+ * ask this first and refuse, rather than trusting a boundary it derived from a
+ * scan. Callers that only read an artifact they generated themselves do not
+ * need it — the boundary there is one they wrote.
+ */
+export function frontmatterParseError(md: string): string | null {
+  const { frontmatter } = splitFrontmatter(md);
+  if (frontmatter === null || frontmatter.trim() === '') return null;
+  try {
+    parseYaml(frontmatter);
+    return null;
+  } catch (err) {
+    return (err as Error).message.split('\n')[0] ?? 'invalid YAML';
+  }
+}
+
 export class StagedFileError extends Error {
   constructor(
     message: string,

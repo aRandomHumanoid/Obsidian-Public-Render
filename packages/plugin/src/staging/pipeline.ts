@@ -16,6 +16,7 @@
 
 import {
   enforceCriticalAssertions,
+  frontmatterParseError,
   serializeStagedFile,
   sourceHash,
   splitFrontmatter,
@@ -132,6 +133,26 @@ export async function buildStagedBody(
   const from = file.path;
   const result = emptyStagedBody(rawBody, source);
 
+  // Everything below treats `rawBody` as publishable. That is only true if the
+  // frontmatter boundary is right, and the boundary comes from a scan for a
+  // column-0 delimiter. Malformed frontmatter can put one where YAML would not
+  // — inside a multi-line quoted scalar — and the split then lands mid-block,
+  // turning `client:` and friends into body text. Unparseable frontmatter is
+  // the tell, so refuse rather than publish a boundary we cannot vouch for.
+  // Checked here rather than in `stageNote` so it covers transclusion targets,
+  // whose properties would otherwise arrive inlined in the host.
+  const frontmatterError = frontmatterParseError(source);
+  if (frontmatterError !== null) {
+    result.issues.push({
+      severity: 'error',
+      code: 'frontmatter-unparseable',
+      message:
+        `${file.path}: the frontmatter does not parse (${frontmatterError}), so the ` +
+        `boundary between it and the body cannot be trusted. Fix the YAML and re-stage.`,
+    });
+    return result;
+  }
+
   // ── 2. Materialize Dataview ───────────────────────────────────────────────
   const acknowledged = acknowledgedOverride ?? ctx.acknowledgedFor?.(file) ?? new Set<string>();
   const materialized = await materializeDataview(result.text, ctx, from, acknowledged);
@@ -164,11 +185,29 @@ export async function buildStagedBody(
   // ── 5. Strip ──────────────────────────────────────────────────────────────
   const stripped = stripComments(result.text);
   result.text = stripped.text;
+  // Both of these mean the delimiters did not pair the way the author wrote
+  // them, and a mis-pair publishes the *interior* of a real comment while no
+  // `%%` survives for the §11.2 check to catch. Error, not warning: the write
+  // gate blocks on error alone, and this is the failure that cannot be walked
+  // back once a link has been shared.
   if (stripped.unterminated) {
     result.issues.push({
-      severity: 'warning',
+      severity: 'error',
       code: 'unterminated-comment',
-      message: `${file.path}: an unterminated %% dropped everything after it`,
+      message:
+        `${file.path}: an unterminated %% would drop everything after it. Close the ` +
+        `comment, or remove the stray delimiter.`,
+    });
+  }
+  for (const pair of stripped.ambiguous) {
+    result.issues.push({
+      severity: 'error',
+      code: 'ambiguous-comment',
+      message:
+        `${file.path}: line ${pair.line} — a %% opens mid-line and closes only after a ` +
+        `blank line, so the delimiters cannot be paired reliably. Put the opening %% on ` +
+        `its own line, close it within the same paragraph, or remove the stray ` +
+        `delimiter: ${pair.context}`,
     });
   }
 

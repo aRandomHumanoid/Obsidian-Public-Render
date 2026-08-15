@@ -43,6 +43,31 @@ export interface FrontmatterSplit {
 const FENCE_OPEN = /^( {0,3})(`{3,}|~{3,})(.*)$/;
 
 /**
+ * The closing delimiter of a frontmatter block, which YAML and Obsidian both
+ * require at **column 0**.
+ *
+ * Matching a *trimmed* line here would be a confidentiality bug, not a
+ * looseness: a block scalar's continuation lines are necessarily indented, so
+ *
+ *     ---
+ *     description: |
+ *       intro
+ *       ---          ← indented, and part of the scalar
+ *     client: Acme
+ *     ---
+ *
+ * would close on the inner line, and every property after it — `client` —
+ * would become the first line of the *body* and publish as ordinary text. The
+ * allowlist cannot catch that: by then the offending keys are not frontmatter
+ * at all, and both the plugin's self-check and CI's re-verification inspect
+ * only the first block, which is the clean generated metadata (§3.2, §4.1).
+ *
+ * Trailing whitespace is still tolerated, because YAML permits it and an
+ * editor may leave it behind.
+ */
+const FRONTMATTER_CLOSE = /^(?:---|\.\.\.)[ \t]*\r?$/;
+
+/**
  * Split a leading YAML frontmatter block off a document.
  *
  * Only recognises a block that starts at byte 0, which is what both Obsidian
@@ -60,7 +85,7 @@ export function splitFrontmatter(md: string): FrontmatterSplit {
   const lines = md.split('\n');
   for (let i = 1; i < lines.length; i++) {
     const line = lines[i] ?? '';
-    if (line.trim() === '---' || line.trim() === '...') {
+    if (FRONTMATTER_CLOSE.test(line)) {
       const frontmatter = lines.slice(1, i).join('\n');
       const consumed = lines.slice(0, i + 1).join('\n').length + 1;
       return {

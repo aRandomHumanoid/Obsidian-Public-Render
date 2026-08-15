@@ -29,7 +29,7 @@ function getPurifier(): ReturnType<typeof createDOMPurify> {
 }
 
 /** Elements we drop outright regardless of what DOMPurify would allow. */
-const FORBID_TAGS = [
+const FORBID_TAGS = Object.freeze([
   'script',
   'foreignObject',
   'iframe',
@@ -43,14 +43,33 @@ const FORBID_TAGS = [
   'animate',
   'animateTransform',
   'animateMotion',
-];
+]);
+
+/**
+ * The same list, lowercased, for the reporting hook.
+ *
+ * `uponSanitizeElement` receives `tagName` already lowercased, so comparing it
+ * against the camelCase entries above matches nothing. That went unnoticed
+ * because DOMPurify's `addToSet` lowercases the caller's array *in place* while
+ * parsing config — before any hook runs — so the list silently repaired itself.
+ * `Object.freeze` above stops that mutation (which is the point: a config array
+ * is ours, not DOMPurify's), so the comparison set is derived explicitly here
+ * rather than depending on undocumented behaviour that only ever affected what
+ * we *report*, never what we remove.
+ */
+const FORBID_TAGS_LOWER = new Set(FORBID_TAGS.map((tag) => tag.toLowerCase()));
 
 /**
  * Attributes we drop on top of DOMPurify's own rules. `href`/`xlink:href` are
  * handled separately below because a *local fragment* reference is legitimate
  * and common — mermaid's arrowhead markers use them.
  */
-const FORBID_ATTR = ['xlink:show', 'xlink:actuate', 'externalResourcesRequired', 'requiredExtensions'];
+const FORBID_ATTR = Object.freeze([
+  'xlink:show',
+  'xlink:actuate',
+  'externalResourcesRequired',
+  'requiredExtensions',
+]);
 
 export interface SvgSanitizeResult {
   svg: string;
@@ -67,7 +86,9 @@ export function sanitizeSvg(input: string): SvgSanitizeResult {
     else if (data.attrName) removed.push(`@${data.attrName}`);
   };
   purify.addHook('uponSanitizeElement', (_node, data) => {
-    if (data.tagName && FORBID_TAGS.includes(data.tagName)) onRemoved({ tagName: data.tagName });
+    if (data.tagName && FORBID_TAGS_LOWER.has(data.tagName.toLowerCase())) {
+      onRemoved({ tagName: data.tagName });
+    }
   });
   purify.addHook('uponSanitizeAttribute', (_node, data) => {
     const name = data.attrName;
@@ -97,8 +118,11 @@ export function sanitizeSvg(input: string): SvgSanitizeResult {
   try {
     svg = purify.sanitize(input, {
       USE_PROFILES: { svg: true, svgFilters: true },
-      FORBID_TAGS,
-      FORBID_ATTR,
+      // A fresh copy each call: DOMPurify lowercases the array it is handed,
+      // in place. Handing it ours would work, but relying on that is how the
+      // hook above came to look correct without being correct.
+      FORBID_TAGS: [...FORBID_TAGS],
+      FORBID_ATTR: [...FORBID_ATTR],
       ADD_TAGS: ['style'],
       WHOLE_DOCUMENT: false,
       RETURN_DOM: false,
