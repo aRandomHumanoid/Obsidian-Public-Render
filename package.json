@@ -14,7 +14,8 @@
     "node": ">=20"
   },
   "scripts": {
-    "build": "npm run build --workspaces --if-present",
+    "build": "npm run build --workspaces --if-present && npm run sync:manifest",
+    "sync:manifest": "node scripts/sync-plugin-manifest.mjs",
     "typecheck": "tsc -b packages/shared packages/build packages/worker packages/plugin",
     "test": "vitest run",
     "test:watch": "vitest",

@@ -3,6 +3,8 @@
  * and menu availability (§3.10).
  */
 
+import { readFile, stat } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { deriveStatus, serializeStagedFile, sourceHash, stagedHash } from '@notes/shared';
 import type { StatusInput } from '@notes/shared';
@@ -254,5 +256,37 @@ describe('action availability is state-dependent (§3.10)', () => {
   it('marks orphan removal as permanent', () => {
     const labels = actionsFor(entry('orphan')).map((a) => a.label);
     expect(labels.some((label) => label.includes('permanent'))).toBe(true);
+  });
+});
+
+/**
+ * BRAT installs a beta plugin by reading `manifest.json` from the *repository
+ * root* and then downloading the release assets. This is a monorepo, so the
+ * real manifest lives in `packages/plugin/` and the root copy is generated
+ * (scripts/sync-plugin-manifest.mjs). A stale copy is the failure worth
+ * guarding: BRAT would install an older version than the release contains and
+ * say nothing.
+ */
+describe('the root manifest BRAT reads stays in step with the plugin', () => {
+  const readJson = async (relative: string) =>
+    JSON.parse(await readFile(fileURLToPath(new URL(relative, import.meta.url)), 'utf8'));
+
+  it('matches packages/plugin/manifest.json field for field', async () => {
+    const source = await readJson('../packages/plugin/manifest.json');
+    const root = await readJson('../manifest.json');
+    expect(root).toEqual(source);
+  });
+
+  it('records this version in versions.json, for older Obsidian installs', async () => {
+    const source = await readJson('../packages/plugin/manifest.json');
+    const versions = await readJson('../versions.json');
+    expect(versions[source.version]).toBe(source.minAppVersion);
+  });
+
+  it('ships the three files a release must carry as assets', async () => {
+    for (const asset of ['main.js', 'manifest.json', 'styles.css']) {
+      const path = fileURLToPath(new URL(`../packages/plugin/${asset}`, import.meta.url));
+      expect((await stat(path)).size, `${asset} is empty or missing`).toBeGreaterThan(0);
+    }
   });
 });

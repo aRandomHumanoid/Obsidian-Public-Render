@@ -176,6 +176,21 @@ the staged copies do not clutter search. The plugin already ignores them.
 
 ### 5. The plugin
 
+Either install it with [BRAT](https://github.com/TfTHacker/obsidian42-brat), which
+also handles updates, or copy the files in by hand.
+
+**With BRAT.** Install BRAT from Community plugins, then *Add beta plugin* and give it:
+
+```
+aRandomHumanoid/Obsidian-Public-Render
+```
+
+BRAT reads `manifest.json` from the repository root — generated from
+`packages/plugin/manifest.json`, never edited directly — and pulls `main.js`,
+`manifest.json` and `styles.css` from the latest release.
+
+**By hand.**
+
 ```bash
 npm run build -w @notes/plugin
 mkdir -p /path/to/vault/.obsidian/plugins/note-publisher
