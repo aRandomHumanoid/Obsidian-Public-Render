@@ -132,7 +132,23 @@ export function assertFrontmatterAllowlist(output: string): AssertionFailure[] {
       },
     ];
   }
-  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return [];
+  // An empty block (`---\n---`) parses to null and carries nothing to leak.
+  if (parsed === null) return [];
+
+  // Anything that is not a key-value map fails *closed*. Returning no failures
+  // here would mean a metadata block that parsed to a string, a number or a
+  // list passed the one assertion whose job is catching non-allowlisted content
+  // in a published artifact — and it would pass silently, which is the worst
+  // shape for a check that exists because the failure cannot be walked back
+  // once a link has been shared.
+  if (typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return [
+      {
+        code: 'frontmatter-leak',
+        message: 'metadata block is not a key-value map, so its keys cannot be verified',
+      },
+    ];
+  }
 
   const extras = Object.keys(parsed as Record<string, unknown>).filter(
     (key) => !PUBLISHED_METADATA_KEYS.includes(key),
@@ -212,7 +228,7 @@ export function enforceCriticalAssertions(input: CriticalAssertionInput): void {
 }
 
 function fingerprint(info: string, content: string): string {
-  return `${info} ${content.replace(/\n$/, '')}`;
+  return `${info}\x00${content.replace(/\n$/, '')}`;
 }
 
 function truncate(text: string, max = 200): string {

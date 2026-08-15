@@ -239,4 +239,32 @@ describe('the three critical assertions (§11.2)', () => {
     expect(failures).toHaveLength(1);
     expect(failures[0]?.message).toContain('client');
   });
+
+  it('accepts an empty metadata block, which carries nothing to leak', () => {
+    // `---\n---` parses to null. There are no keys, so there is nothing to
+    // verify and nothing to leak — this must stay a pass, or every note
+    // without properties would fail closed for no reason.
+    expect(assertFrontmatterAllowlist('---\n---\n\nBody.')).toHaveLength(0);
+  });
+
+  it('fails closed on a metadata block that is not a key-value map', () => {
+    // A block parsing to a string, a number or a list has no keys to check
+    // against the allowlist. Returning "no failures" would mean the one
+    // assertion whose job is catching non-allowlisted content in a published
+    // artifact passed *silently* on a malformed block — the worst shape for a
+    // check that exists because the failure cannot be walked back once a link
+    // has been shared.
+    for (const block of ['just a bare string', '42', '- one\n- two', '"quoted"']) {
+      const failures = assertFrontmatterAllowlist(`---\n${block}\n---\n\nBody.`);
+      expect(failures, `block: ${block}`).toHaveLength(1);
+      expect(failures[0]?.code).toBe('frontmatter-leak');
+      expect(failures[0]?.message).toContain('not a key-value map');
+    }
+  });
+
+  it('fails closed on a metadata block that does not parse at all', () => {
+    const failures = assertFrontmatterAllowlist('---\nkey: [unclosed\n---\n\nBody.');
+    expect(failures).toHaveLength(1);
+    expect(failures[0]?.code).toBe('frontmatter-leak');
+  });
 });
