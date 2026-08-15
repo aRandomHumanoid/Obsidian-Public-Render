@@ -164,11 +164,29 @@ export async function buildStagedBody(
   // ── 5. Strip ──────────────────────────────────────────────────────────────
   const stripped = stripComments(result.text);
   result.text = stripped.text;
+  // Both of these mean the delimiters did not pair the way the author wrote
+  // them, and a mis-pair publishes the *interior* of a real comment while no
+  // `%%` survives for the §11.2 check to catch. Error, not warning: the write
+  // gate blocks on error alone, and this is the failure that cannot be walked
+  // back once a link has been shared.
   if (stripped.unterminated) {
     result.issues.push({
-      severity: 'warning',
+      severity: 'error',
       code: 'unterminated-comment',
-      message: `${file.path}: an unterminated %% dropped everything after it`,
+      message:
+        `${file.path}: an unterminated %% would drop everything after it. Close the ` +
+        `comment, or remove the stray delimiter.`,
+    });
+  }
+  for (const pair of stripped.ambiguous) {
+    result.issues.push({
+      severity: 'error',
+      code: 'ambiguous-comment',
+      message:
+        `${file.path}: line ${pair.line} — a %% opens mid-line and closes only after a ` +
+        `blank line, so the delimiters cannot be paired reliably. Put the opening %% on ` +
+        `its own line, close it within the same paragraph, or remove the stray ` +
+        `delimiter: ${pair.context}`,
     });
   }
 

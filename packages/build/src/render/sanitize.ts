@@ -283,8 +283,15 @@ export function buildSanitizeSchema(): SanitizeSchema {
       href: ['http', 'https', 'mailto'],
       src: ['http', 'https'],
     },
-    // `style` elements survive only inside SVG, where mermaid needs them. Their
-    // contents were stripped of `@import` and `url()` by the SVG sanitizer.
+    // `style` elements survive only inside SVG, where mermaid needs them.
+    //
+    // Note what does *not* protect them: `sanitizeSvg` runs on attachments
+    // only (assets.ts), so a `<style>` that mermaid inlines into the page has
+    // never been through its `@import`/`url()` pass. What makes that safe is
+    // the page CSP — `default-src 'none'` (§7.3) — which blocks the fetch an
+    // `@import` or `url()` would attempt, and the pages ship zero JavaScript.
+    // The protection is the header, not the sanitizer; anything that relaxes
+    // the CSP has to revisit this line.
     allowComments: false,
   };
 }
