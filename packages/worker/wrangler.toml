@@ -21,7 +21,7 @@ enabled = true
 
 [[kv_namespaces]]
 binding = "NOTES"
-id = "REPLACE_WITH_KV_NAMESPACE_ID"
+id = "5a1be4fada66458484035130d257bea9"
 
 [[r2_buckets]]
 binding = "ASSETS"
