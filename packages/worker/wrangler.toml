@@ -1,0 +1,45 @@
+# The worker holds NO GitHub credentials and has no network path to the repo.
+# Its bindings are the complete universe of data it can reach, and that
+# universe contains only things a build already decided to publish (§2.1).
+#
+# Invariant: the worker can only serve bytes that a build already decided to
+# publish. Every change to this file should be reviewed against that sentence —
+# a new binding is a change to what the public-facing service can see.
+
+name = "notes"
+main = "src/index.ts"
+compatibility_date = "2024-11-01"
+
+# `<worker>.<subdomain>.workers.dev`, permanently (§7.4). No custom domain: no
+# registration cost, nothing to renew, no migration planned. The trade is no
+# cache purge (there is no zone to purge), URLs that advertise their
+# infrastructure, and shared links that are workers.dev links forever.
+workers_dev = true
+
+[observability]
+enabled = true
+
+[[kv_namespaces]]
+binding = "NOTES"
+id = "REPLACE_WITH_KV_NAMESPACE_ID"
+
+[[r2_buckets]]
+binding = "ASSETS"
+bucket_name = "notes-assets"
+
+[vars]
+SITE_NAME = "Notes"
+
+# MANIFEST_TOKEN is a *secret*, not a var:
+#   wrangler secret put MANIFEST_TOKEN
+#
+# It is optional (§3.5). Unset, /_manifest 404s like any unknown route and the
+# plugin falls back to a HEAD per known share_id. Set, it returns the complete
+# list of your published share_ids — which is to say every unlisted URL you
+# have, in a single response. That is much safer than a PAT and considerably
+# more sensitive than "read-only metadata" implies.
+
+# The worker is deployed BY HAND, deliberately (§4.4, §10):
+#   - it makes "deploy the reader first" possible across a schema bump, and
+#   - it is why CLOUDFLARE_API_TOKEN does not carry Workers Scripts: Edit, so a
+#     compromised CI token cannot replace worker code.

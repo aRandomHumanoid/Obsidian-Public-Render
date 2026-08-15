@@ -1,0 +1,29 @@
+# CI for the pipeline repository itself.
+#
+# Distinct from `publish.yml`, which belongs in the vault repo and runs against
+# `published/`. This one just proves the tool still works.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --omit=optional
+      - run: npm run typecheck
+      - run: npm run build
+      - run: npm test

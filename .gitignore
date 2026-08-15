@@ -1,0 +1,19 @@
+node_modules/
+dist/
+*.tsbuildinfo
+.wrangler/
+coverage/
+.env
+.env.*
+!.env.example
+
+# --- Vault-side (§3.3) -------------------------------------------------------
+# The pending staging directory MUST be gitignored. This is not hygiene: if
+# staged files landed in the tracked tree, Obsidian Git's timer-based
+# auto-commit would sweep them up and publish them without the review modal
+# ever opening, defeating the gate that justifies the whole architecture.
+#
+# This entry also belongs in the .gitignore of the *vault* repo. `npm run
+# start -w @notes/plugin -- --check-gitignore` and the plugin's own startup
+# check both verify it there.
+.publish-pending/

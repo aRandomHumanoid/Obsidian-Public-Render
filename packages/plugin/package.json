@@ -1,0 +1,24 @@
+{
+  "name": "@notes/plugin",
+  "version": "1.3.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node esbuild.config.mjs production",
+    "dev": "node esbuild.config.mjs",
+    "typecheck": "tsc -b",
+    "clean": "rm -rf dist main.js *.tsbuildinfo"
+  },
+  "dependencies": {
+    "@notes/shared": "*",
+    "github-slugger": "^2.0.0",
+    "mdast-util-from-markdown": "^2.0.2",
+    "mdast-util-gfm": "^3.0.0",
+    "micromark-extension-gfm": "^3.0.0"
+  },
+  "devDependencies": {
+    "builtin-modules": "^4.0.0",
+    "esbuild": "^0.24.2",
+    "obsidian": "^1.7.2"
+  }
+}

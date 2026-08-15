@@ -1,0 +1,258 @@
+/**
+ * Plugin-side behaviour: the status table (§3.4), the Unstage guard (§3.6),
+ * and menu availability (§3.10).
+ */
+
+import { beforeEach, describe, expect, it } from 'vitest';
+import { deriveStatus, serializeStagedFile, sourceHash, stagedHash } from '@notes/shared';
+import type { StatusInput } from '@notes/shared';
+import { Actions } from '../packages/plugin/src/actions.js';
+import { DEFAULT_SETTINGS } from '../packages/plugin/src/settings.js';
+import type { PublisherSettings } from '../packages/plugin/src/settings.js';
+import { PublishStore } from '../packages/plugin/src/vault/store.js';
+import { actionsFor } from '../packages/plugin/src/ui/panel.js';
+import type { NoteEntry, ScanResult } from '../packages/plugin/src/state/scan.js';
+import { Notice } from './harness/obsidian.js';
+import { FakeApp } from './harness/app.js';
+
+const ID = '7k2m9x4qp8vw3n6r';
+
+function status(overrides: Partial<StatusInput> = {}) {
+  return deriveStatus({
+    shareId: ID,
+    sourceNotes: 1,
+    publishFlag: true,
+    pushed: false,
+    remoteKnown: true,
+    ...overrides,
+  });
+}
+
+describe('status derivation (§3.4)', () => {
+  it('Live: local stagedHash equals remote stagedHash', () => {
+    expect(
+      status({ publishedHash: 'aaa', remoteHash: 'aaa', pushed: true })?.status,
+    ).toBe('live');
+  });
+
+  it('Staged: a pending file that has not been materialized and pushed', () => {
+    expect(status({ pendingHash: 'aaa' })?.status).toBe('staged');
+  });
+
+  it('Building: pushed, remote hash still absent', () => {
+    expect(status({ publishedHash: 'aaa', pushed: true })?.status).toBe('building');
+  });
+
+  it('Stale: the source has moved on since it was staged', () => {
+    expect(
+      status({
+        publishedHash: 'aaa',
+        remoteHash: 'aaa',
+        pushed: true,
+        currentSourceHash: 'new',
+        stagedSourceHash: 'old',
+      })?.status,
+    ).toBe('stale');
+  });
+
+  it('Unstaged: publish: true with a share_id but nothing staged', () => {
+    expect(status({ publishFlag: true })?.status).toBe('unstaged');
+  });
+
+  it('Removing: the staged file is gone but KV still has it', () => {
+    expect(status({ publishFlag: false, remoteHash: 'aaa' })?.status).toBe('removing');
+  });
+
+  it('Orphan (common flavour): a staged file no note claims', () => {
+    const result = status({ sourceNotes: 0, publishedHash: 'aaa' });
+    expect(result?.status).toBe('orphan');
+    expect(result?.explanation).toContain('no note carries this share_id');
+  });
+
+  it('Orphan (rare flavour): live in KV with nothing local, needs the manifest', () => {
+    const result = status({ sourceNotes: 0, remoteHash: 'aaa' });
+    expect(result?.status).toBe('orphan');
+    expect(result?.explanation).toContain('diverged');
+  });
+
+  it('Conflict: two notes claim one share_id', () => {
+    expect(status({ sourceNotes: 2, publishedHash: 'aaa' })?.status).toBe('conflict');
+  });
+
+  it('Issue: a validation failure outranks everything', () => {
+    expect(
+      status({
+        publishedHash: 'aaa',
+        remoteHash: 'aaa',
+        issues: [{ severity: 'error', code: 'x', message: 'broken' }],
+      })?.status,
+    ).toBe('issue');
+  });
+
+  it('reports Building rather than Live when remote state is unknown', () => {
+    const result = status({ publishedHash: 'aaa', pushed: true, remoteKnown: false });
+    expect(result?.status).toBe('building');
+    expect(result?.live).toBe(false);
+  });
+
+  it('shows nothing for a note with no share_id anywhere', () => {
+    expect(status({ sourceNotes: 0 })).toBeNull();
+  });
+});
+
+describe('Unstage refuses on a live note (§3.6, §11.4)', () => {
+  let app: FakeApp;
+  let store: PublishStore;
+  let actions: Actions;
+  let scan: ScanResult | null;
+  let settings: PublisherSettings;
+
+  async function seed(options: { live: boolean; pushed: boolean }) {
+    app = new FakeApp();
+    settings = { ...DEFAULT_SETTINGS, properties: { ...DEFAULT_SETTINGS.properties } };
+    store = new PublishStore(app.asApp(), settings);
+
+    const note = app.addNote(
+      'Projects/Widget.md',
+      `---\npublish: true\nshare_id: ${ID}\n---\n\n# Widget design\n\nBody.\n`,
+    );
+
+    const body = '# Widget design\n\nBody.';
+    const contents = serializeStagedFile(
+      {
+        share_id: ID,
+        title: 'Widget design',
+        source_hash: await sourceHash(body, { title: 'Widget design' }),
+        staged: '2026-08-02T14:03:11Z',
+        indexable: false,
+        download: true,
+      },
+      body,
+    );
+    await store.ensureDirs();
+    await app.adapter.write(store.publishedPath(ID), contents);
+
+    const entry: NoteEntry = {
+      shareId: ID,
+      title: 'Widget design',
+      file: note,
+      status: options.live ? 'live' : 'staged',
+      detail: {
+        status: options.live ? 'live' : 'staged',
+        live: options.live,
+        pushed: options.pushed,
+        stale: false,
+        hasPending: false,
+        explanation: '',
+      },
+      url: `https://notes.example.workers.dev/n/${ID}`,
+      stagedAt: '2026-08-02T14:03:11Z',
+      claimants: [note],
+      localHash: await stagedHash(contents),
+      assets: [],
+    };
+
+    scan = {
+      entries: [entry],
+      byShareId: new Map([[ID, entry]]),
+      counts: {} as ScanResult['counts'],
+      remote: { hashes: new Map(), complete: true, fetchedAt: Date.now() },
+      git: {} as ScanResult['git'],
+      scannedAt: Date.now(),
+    };
+
+    actions = new Actions({
+      app: app.asApp(),
+      settings,
+      store,
+      scan: () => scan,
+      refresh: async () => {},
+    });
+
+    return note;
+  }
+
+  beforeEach(() => {
+    Notice.shown.length = 0;
+  });
+
+  it('refuses, points at Stage for removal, and leaves the staged file intact', async () => {
+    const note = await seed({ live: true, pushed: true });
+
+    const result = await actions.unstage(note);
+
+    expect(result).toBe(false);
+    expect(await store.readPublished(ID)).not.toBeNull();
+    expect(app.contentsOf('Projects/Widget.md')).toContain(`share_id: ${ID}`);
+    expect(Notice.shown.join(' ')).toContain('Stage for removal');
+  });
+
+  it('refuses on a pushed note even when remote state is unknown', async () => {
+    const note = await seed({ live: false, pushed: true });
+    expect(await actions.unstage(note)).toBe(false);
+    expect(await store.readPublished(ID)).not.toBeNull();
+  });
+
+  it('allows unstaging work that never left the machine', async () => {
+    const note = await seed({ live: false, pushed: false });
+
+    expect(await actions.unstage(note)).toBe(true);
+    expect(await store.readPublished(ID)).toBeNull();
+    // The frontmatter the plugin added is reverted; the note itself is not.
+    expect(app.contentsOf('Projects/Widget.md')).not.toContain('share_id');
+    expect(app.contentsOf('Projects/Widget.md')).toContain('# Widget design');
+  });
+
+  it('Stage for removal works on a live note, and records the intent', async () => {
+    await seed({ live: true, pushed: true });
+
+    await actions.stageForRemoval(ID);
+
+    expect(await store.readPublished(ID)).toBeNull();
+    expect(app.contentsOf('Projects/Widget.md')).toContain('publish: false');
+    // `publish: false` rather than deleting the property, because it keeps
+    // share_id in the note — re-staging later restores the same URL (§3.6).
+    expect(app.contentsOf('Projects/Widget.md')).toContain(`share_id: ${ID}`);
+  });
+
+  it('Stage for removal repairs an orphan, with no source note to write to', async () => {
+    await seed({ live: true, pushed: true });
+    scan = null;
+
+    await actions.stageForRemoval(ID);
+
+    expect(await store.readPublished(ID)).toBeNull();
+    expect(Notice.shown.join(' ')).toContain('gone for good');
+  });
+});
+
+describe('action availability is state-dependent (§3.10)', () => {
+  const entry = (status: NoteEntry['status']): NoteEntry =>
+    ({
+      shareId: ID,
+      title: 'x',
+      file: null,
+      status,
+      detail: { status, live: false, pushed: false, stale: false, hasPending: false, explanation: '' },
+      url: '',
+      stagedAt: null,
+      claimants: [],
+      localHash: null,
+      assets: [],
+    }) as NoteEntry;
+
+  it('offers Unstage on a staged note and Stage for removal on a live one, never both', () => {
+    const staged = actionsFor(entry('staged')).map((a) => a.label);
+    const live = actionsFor(entry('live')).map((a) => a.label);
+
+    expect(staged).toContain('Unstage');
+    expect(staged).not.toContain('Stage for removal');
+    expect(live).toContain('Stage for removal');
+    expect(live).not.toContain('Unstage');
+  });
+
+  it('marks orphan removal as permanent', () => {
+    const labels = actionsFor(entry('orphan')).map((a) => a.label);
+    expect(labels.some((label) => label.includes('permanent'))).toBe(true);
+  });
+});

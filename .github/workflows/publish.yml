@@ -1,0 +1,210 @@
+# Note publishing pipeline (§5).
+#
+# This file belongs in the **vault repo**, not here — it is the half of the
+# pipeline that runs against `published/`. Copy it to
+# `.github/workflows/publish.yml` in the private vault repository.
+
+name: Publish
+
+# §5.1 — the path filter is not an optimization, it is the difference between
+# this working and not.
+#
+# The vault repo is a backup repo: Obsidian Git commits on a timer, so ordinary
+# note-taking produces a push every few minutes. Without the filter, every one
+# of those starts a build. At a five-minute auto-commit interval that is
+# roughly 8,600 builds a month against a 2,000 minute allowance — four times
+# over budget, to publish nothing.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'published/**'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Reconcile and report, but write nothing'
+        type: boolean
+        default: false
+
+# §5.7 — serialize builds. A burst of pushes produces sequential builds rather
+# than racing ones. Each build reconciles to its own commit, so the last to run
+# wins and is correct by construction. `cancel-in-progress: false` is the point:
+# cancelling can interrupt a write sequence, and reconciliation already makes a
+# slightly-late run harmless.
+concurrency:
+  group: publish
+  cancel-in-progress: false
+
+# §6.3 — nothing here needs to write to the repository.
+permissions:
+  contents: read
+
+env:
+  PUBLIC_BASE_URL: https://notes.CHANGE-ME.workers.dev
+  R2_BUCKET: notes-assets
+
+jobs:
+  publish:
+    name: Reconcile and publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      # ── the vault repo, and only `published/` of it ──────────────────────
+      #
+      # Pin to a full commit SHA before relying on this (§6.3):
+      #   gh api repos/actions/checkout/commits/v4 --jq .sha
+      - name: Checkout published/
+        uses: actions/checkout@v4
+        with:
+          # Sparse checkout is what makes the CI trust zone real (§2.2). It
+          # must be verified, not assumed — see the boundary probe below.
+          sparse-checkout: published/
+          sparse-checkout-cone-mode: false
+
+          # §5.2 — `fetch-depth: 0`, not `1`. Deletion corroboration in §5.6
+          # compares `git diff --name-status` against the previous commit, and
+          # at depth 1 there is no previous commit: every build would refuse
+          # every deletion, forever, and the symptom would look like a
+          # reconciliation bug rather than a checkout setting. Depth 0 with
+          # `filter: blob:none` fetches the commit graph without blob contents,
+          # which is exactly the shape `--name-status` needs. It also covers the
+          # force-push case, where the event's `before` SHA can be further back
+          # than any fixed depth would reach.
+          fetch-depth: 0
+          filter: blob:none
+
+          # §5.2 — a security setting, not hygiene. By default `actions/checkout`
+          # leaves a working token in `.git/config`. Combined with partial clone
+          # — which does not refuse missing blobs but *lazily fetches* them on
+          # demand — that token would let any later step read unpublished notes
+          # straight out of the repo, from a working tree that appears to
+          # contain only `published/`. Sparse checkout would be presentation
+          # rather than a boundary. Dropping the credential removes the
+          # mechanism: lazy fetch has nothing to authenticate with.
+          persist-credentials: false
+
+          # Staged attachments live in the repo and may be LFS-tracked. Without
+          # this, images publish as pointer text.
+          lfs: true
+
+      # ── §6.3 / §12: the boundary probe ──────────────────────────────────
+      #
+      # The M4 verification task, kept as a permanent gate rather than a
+      # one-time check. It costs two seconds and it is the only thing that
+      # distinguishes "sparse checkout is a security boundary" from "sparse
+      # checkout is a convenience".
+      - name: Verify the vault is unreachable from the runner
+        run: |
+          set -u
+          fail=0
+
+          echo "::group::Working tree"
+          ls -A
+          echo "::endgroup::"
+
+          # A "path not found" error is not a pass — it may mean the path is
+          # merely absent from the working tree while the object is reachable.
+          # So probe an object that exists in the commit but outside published/.
+          probe="$(git ls-tree -r HEAD --name-only | grep -v '^published/' | head -1 || true)"
+
+          if [ -z "$probe" ]; then
+            echo "note: this commit has nothing outside published/ to probe with."
+          else
+            echo "probing: $probe"
+            if git cat-file -e "HEAD:$probe" 2>/dev/null; then
+              echo "::error::BOUNDARY BROKEN — the runner can read $probe, which is outside published/."
+              fail=1
+            else
+              echo "ok: object outside published/ is not present"
+            fi
+          fi
+
+          if git fetch origin 2>/dev/null; then
+            echo "::error::BOUNDARY BROKEN — the runner can still fetch from origin."
+            fail=1
+          else
+            echo "ok: git fetch is not authenticated"
+          fi
+
+          if [ "$fail" -ne 0 ]; then
+            echo "::error::See §6.3. Expected outcomes, in order of likelihood:"
+            echo "  1. passes as configured;"
+            echo "  2. passes once persist-credentials: false is set (already set here);"
+            echo "  3. fails even then — take the two-repo fallback."
+            exit 1
+          fi
+
+      # ── the pipeline itself ─────────────────────────────────────────────
+      #
+      # The tool lives in its own repository so the vault repo carries notes and
+      # nothing else. `persist-credentials: false` here too: the default token
+      # is scoped to the *vault* repo, and leaving it in any `.git/config` on
+      # this runner would undo the step above.
+      #
+      # Vendoring the pipeline into the vault repo instead is equally valid —
+      # add its directory to `sparse-checkout` above and drop this step. CI
+      # still cannot see `Notes/` either way.
+      - name: Checkout the publishing pipeline
+        uses: actions/checkout@v4
+        with:
+          repository: CHANGE-ME/Obsidian-Public-Render
+          ref: main
+          path: .pipeline
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: .pipeline/package-lock.json
+
+      # §6.3 — `npm ci` against a committed lockfile, minimal dependency
+      # surface, reviewed rather than auto-merged updates.
+      - name: Install
+        working-directory: .pipeline
+        run: npm ci --omit=optional
+
+      # Mermaid needs a browser, so it is an optional dependency (see
+      # render/mermaid.ts). Install it only when the corpus actually contains a
+      # diagram; a vault with no diagrams should not pay for a Chromium
+      # download on every build.
+      - name: Install the mermaid renderer if the corpus needs one
+        id: mermaid
+        run: |
+          if grep -rlq '^```mermaid' published/ 2>/dev/null; then
+            echo "needed=true" >> "$GITHUB_OUTPUT"
+            npm install --no-save @mermaid-js/mermaid-cli --prefix .pipeline
+          else
+            echo "needed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build the pipeline
+        working-directory: .pipeline
+        run: npm run build
+
+      # The three assertions run here as well as in the plugin (§11.2). The
+      # duplication is deliberate: these are the failures that cannot be walked
+      # back once a link has been shared.
+      - name: Run the critical assertions against the fixture corpus
+        working-directory: .pipeline
+        run: npm test
+
+      - name: Publish
+        working-directory: ${{ github.workspace }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          KV_NAMESPACE_ID: ${{ secrets.KV_NAMESPACE_ID }}
+          R2_BUCKET: ${{ env.R2_BUCKET }}
+          PUBLIC_BASE_URL: ${{ env.PUBLIC_BASE_URL }}
+          PUBLISHED_DIR: published
+          # Force-pushes and rollbacks compare against the previous tip rather
+          # than HEAD~1, so the event's `before` SHA is preferred where it
+          # exists (§5.6).
+          BASE_SHA: ${{ github.event.before }}
+          HEAD_SHA: ${{ github.sha }}
+          DRY_RUN: ${{ inputs.dry_run && '1' || '0' }}
+          MERMAID: ${{ steps.mermaid.outputs.needed == 'true' && 'error' || 'skip' }}
+        run: node .pipeline/packages/build/dist/cli.js

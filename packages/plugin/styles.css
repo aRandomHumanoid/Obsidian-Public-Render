@@ -1,0 +1,301 @@
+/* Note publisher — panel and review modal (§3.4, §3.9). */
+
+.note-publisher-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 0;
+  overflow: hidden;
+}
+
+/* ── header ─────────────────────────────────────────────────────────────── */
+
+.note-publisher-panel .np-header {
+  display: flex;
+  align-items: center;
+  gap: var(--size-4-2);
+  flex-wrap: wrap;
+  padding: var(--size-4-3) var(--size-4-4);
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.note-publisher-panel .np-header-title {
+  margin: 0;
+  font-size: var(--font-ui-medium);
+  flex: 1 1 auto;
+}
+
+.note-publisher-panel .np-header-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--size-4-2);
+}
+
+.note-publisher-panel .np-muted {
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+}
+
+.note-publisher-panel .np-header-actions .np-muted {
+  cursor: pointer;
+}
+
+.note-publisher-panel .np-warning-inline {
+  color: var(--text-warning);
+  font-size: var(--font-ui-smaller);
+}
+
+.note-publisher-panel .np-banner {
+  flex-basis: 100%;
+  padding: var(--size-4-2) var(--size-4-3);
+  border-radius: var(--radius-s);
+  background: var(--background-modifier-hover);
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+}
+
+.note-publisher-panel .np-banner-danger {
+  background: var(--background-modifier-error);
+  color: var(--text-on-accent);
+}
+
+/* ── master–detail ──────────────────────────────────────────────────────── */
+
+.note-publisher-panel .np-body {
+  display: grid;
+  grid-template-columns: minmax(200px, 280px) 1fr;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.note-publisher-panel .np-list {
+  border-right: 1px solid var(--background-modifier-border);
+  overflow-y: auto;
+  padding: var(--size-4-2);
+}
+
+.note-publisher-panel .np-detail {
+  overflow-y: auto;
+  padding: var(--size-4-4);
+}
+
+/* Below the width threshold the detail pane collapses and selecting a row
+   pushes it in with a back control, so the same view degrades cleanly into a
+   sidebar without a second implementation (§3.4). */
+.note-publisher-panel.np-narrow .np-body {
+  grid-template-columns: 1fr;
+}
+
+.note-publisher-panel.np-narrow .np-detail {
+  display: none;
+}
+
+.note-publisher-panel.np-narrow.np-showing-detail .np-list {
+  display: none;
+}
+
+.note-publisher-panel.np-narrow.np-showing-detail .np-detail {
+  display: block;
+}
+
+.note-publisher-panel .np-back {
+  margin-bottom: var(--size-4-3);
+}
+
+/* ── list ───────────────────────────────────────────────────────────────── */
+
+.note-publisher-panel .np-filter {
+  width: 100%;
+  margin-bottom: var(--size-4-2);
+}
+
+.note-publisher-panel .np-group {
+  margin: var(--size-4-3) 0 var(--size-4-1);
+  font-size: var(--font-ui-smaller);
+  letter-spacing: 0.06em;
+  color: var(--text-faint);
+}
+
+.note-publisher-panel .np-row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--size-4-2);
+  padding: var(--size-4-1) var(--size-4-2);
+  border-radius: var(--radius-s);
+  cursor: pointer;
+}
+
+.note-publisher-panel .np-row:hover {
+  background: var(--background-modifier-hover);
+}
+
+.note-publisher-panel .np-row.is-selected {
+  background: var(--background-modifier-active-hover);
+}
+
+.note-publisher-panel .np-row-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.note-publisher-panel .np-glyph {
+  font-size: 0.85em;
+  color: var(--text-muted);
+}
+
+.note-publisher-panel .np-glyph-live { color: var(--color-green); }
+.note-publisher-panel .np-glyph-building { color: var(--color-blue); }
+.note-publisher-panel .np-glyph-stale { color: var(--color-yellow); }
+.note-publisher-panel .np-glyph-removing { color: var(--text-faint); }
+.note-publisher-panel .np-glyph-orphan,
+.note-publisher-panel .np-glyph-conflict,
+.note-publisher-panel .np-glyph-issue { color: var(--text-error); }
+
+.note-publisher-panel .np-empty {
+  padding: var(--size-4-4);
+  text-align: center;
+}
+
+/* ── detail ─────────────────────────────────────────────────────────────── */
+
+.note-publisher-panel .np-detail-title {
+  margin: 0 0 var(--size-4-1);
+}
+
+.note-publisher-panel .np-url-row {
+  display: flex;
+  align-items: center;
+  gap: var(--size-4-2);
+  margin-bottom: var(--size-4-4);
+  padding-bottom: var(--size-4-3);
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.note-publisher-panel .np-url {
+  font-family: var(--font-monospace);
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
+.note-publisher-panel .np-icon-button {
+  padding: 2px 6px;
+  background: none;
+  box-shadow: none;
+  cursor: pointer;
+  color: var(--text-muted);
+}
+
+.note-publisher-panel .np-fact {
+  display: grid;
+  grid-template-columns: 6rem 1fr;
+  gap: var(--size-4-2);
+  padding: 2px 0;
+  font-size: var(--font-ui-small);
+}
+
+.note-publisher-panel .np-fact-label {
+  color: var(--text-faint);
+}
+
+.note-publisher-panel .np-link {
+  color: var(--text-accent);
+  cursor: pointer;
+}
+
+.note-publisher-panel .np-dropped {
+  margin: var(--size-4-4) 0;
+  padding: var(--size-4-3);
+  border-radius: var(--radius-s);
+  border-left: 3px solid var(--color-yellow);
+  background: var(--background-modifier-hover);
+  font-size: var(--font-ui-small);
+}
+
+.note-publisher-panel .np-dropped-head {
+  font-weight: var(--font-semibold);
+  margin-bottom: var(--size-4-1);
+}
+
+.note-publisher-panel .np-dropped-item {
+  color: var(--text-muted);
+  font-family: var(--font-monospace);
+  font-size: var(--font-ui-smaller);
+}
+
+.note-publisher-panel .np-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--size-4-2);
+  margin-top: var(--size-4-4);
+}
+
+/* ── diffs, shared with the review modal ────────────────────────────────── */
+
+.np-diff {
+  margin: var(--size-4-4) 0;
+}
+
+.np-diff summary {
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+}
+
+.np-diff pre {
+  max-height: 22rem;
+  overflow: auto;
+  font-size: var(--font-ui-smaller);
+  background: var(--background-primary-alt);
+  border-radius: var(--radius-s);
+  padding: var(--size-4-3);
+}
+
+/* ── review modal ───────────────────────────────────────────────────────── */
+
+.note-publisher-review {
+  max-width: 42rem;
+  width: 90vw;
+}
+
+.note-publisher-review .np-review-section {
+  margin-bottom: var(--size-4-4);
+}
+
+.note-publisher-review .np-review-section h4 {
+  margin: 0 0 var(--size-4-2);
+  font-size: var(--font-ui-smaller);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.note-publisher-review .np-review-row {
+  padding: var(--size-4-1) 0;
+}
+
+.note-publisher-review .np-review-title {
+  font-weight: var(--font-semibold);
+}
+
+.note-publisher-review .np-review-url {
+  font-family: var(--font-monospace);
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
+.note-publisher-review .np-warning {
+  padding: var(--size-4-3);
+  border-radius: var(--radius-s);
+  background: var(--background-modifier-hover);
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+}
+
+.note-publisher-review .np-review-warning {
+  color: var(--text-warning);
+  font-size: var(--font-ui-smaller);
+  cursor: help;
+}
