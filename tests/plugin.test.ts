@@ -436,3 +436,107 @@ describe('links to pages that are no longer published (§3.4)', () => {
     expect(scan.byShareId.get(LINKER)?.detail.stale).toBe(false);
   });
 });
+
+/**
+ * The Push button counts what the *next push will carry*, which is a git
+ * question. `removing` is not: it lasts from the moment the staged file is
+ * deleted until CI drops the KV key, which spans the push itself. Counting the
+ * status kept the button enabled showing "(1)" after the removal was already
+ * committed and pushed — and the review modal, which reads real
+ * `git diff --cached`, then correctly reported nothing to publish.
+ */
+describe('the Push button and the review modal agree (§3.9)', () => {
+  const ID = '7k2m9x4qp8vw3n6r';
+
+  async function scanRemoval(git: { dirty: string[]; unpushed: string[] }) {
+    const app = new FakeApp();
+    const settings: PublisherSettings = {
+      ...DEFAULT_SETTINGS,
+      properties: { ...DEFAULT_SETTINGS.properties },
+    };
+    const store = new PublishStore(app.asApp(), settings);
+    await store.ensureDirs();
+
+    // Staged for removal: the staged file is gone, the note keeps its share_id,
+    // and KV still has the document until the build reconciles.
+    app.addNote('Notes/Gone.md', `---\npublish: false\nshare_id: ${ID}\n---\n\n# Gone\n`);
+
+    return scanVault({
+      app: app.asApp(),
+      settings,
+      store,
+      git: { repoRelative: async (path: string) => path } as unknown as GitService,
+      gitState: {
+        dirty: new Set(git.dirty),
+        unpushed: new Set(git.unpushed),
+      } as unknown as GitState,
+      remote: { hashes: new Map([[ID, 'remote-hash']]), complete: true, fetchedAt: Date.now() },
+    });
+  }
+
+  const path = `${DEFAULT_SETTINGS.stagingFolder}/${ID}.md`;
+
+  it('counts a removal that has not been committed yet', async () => {
+    const scan = await scanRemoval({ dirty: [path], unpushed: [] });
+    const entry = scan.byShareId.get(ID);
+    expect(entry?.status).toBe('removing');
+    expect(entry?.needsPush).toBe(true);
+  });
+
+  it('counts a removal committed but not yet pushed', async () => {
+    const scan = await scanRemoval({ dirty: [], unpushed: [path] });
+    expect(scan.byShareId.get(ID)?.needsPush).toBe(true);
+  });
+
+  it('still counts an ordinary staged note waiting to be pushed', async () => {
+    // The common path, and the one that must not regress: `.publish-pending/`
+    // is gitignored, so git cannot see it — the pending file is the only
+    // evidence there is something to push.
+    const app = new FakeApp();
+    const settings: PublisherSettings = {
+      ...DEFAULT_SETTINGS,
+      properties: { ...DEFAULT_SETTINGS.properties },
+    };
+    const store = new PublishStore(app.asApp(), settings);
+    await store.ensureDirs();
+
+    const body = '\n# Fresh\n';
+    app.addNote('Notes/Fresh.md', `---\npublish: true\nshare_id: ${ID}\n---\n${body}`);
+    await store.writePending(
+      ID,
+      serializeStagedFile(
+        {
+          share_id: ID,
+          title: 'Fresh',
+          source_hash: await sourceHash(body, { title: 'Fresh', indexable: false, download: true }),
+          staged: '2026-08-02T14:03:11Z',
+          indexable: false,
+          download: true,
+        },
+        '# Fresh',
+      ),
+    );
+
+    const scan = await scanVault({
+      app: app.asApp(),
+      settings,
+      store,
+      git: { repoRelative: async (p: string) => p } as unknown as GitService,
+      gitState: { dirty: new Set<string>(), unpushed: new Set<string>() } as unknown as GitState,
+      remote: emptyRemoteState(),
+    });
+
+    const entry = scan.byShareId.get(ID);
+    expect(entry?.status).toBe('staged');
+    expect(entry?.needsPush).toBe(true);
+  });
+
+  it('stops counting it once it has actually been pushed', async () => {
+    // The reported bug: still `removing`, because CI has not dropped the KV key
+    // yet — but git has nothing left to carry, so the button must not offer it.
+    const scan = await scanRemoval({ dirty: [], unpushed: [] });
+    const entry = scan.byShareId.get(ID);
+    expect(entry?.status).toBe('removing');
+    expect(entry?.needsPush).toBe(false);
+  });
+});

@@ -143,15 +143,18 @@ export class PublishPanel extends ItemView {
       warn.title = scan.remote.error;
     }
 
-    const pending = scan
-      ? scan.entries.filter((entry) => entry.status === 'staged' || entry.status === 'removing').length
-      : 0;
+    // What the next push will actually carry, as git sees it — not a count of
+    // statuses. `removing` outlives the push (it lasts until CI drops the KV
+    // key), so counting it here kept the button enabled with "(1)" after the
+    // work was already pushed, and the modal then said there was nothing to
+    // publish. The button and the modal now answer from the same place.
+    const toPush = scan ? scan.entries.filter((entry) => entry.needsPush).length : 0;
 
     const push = right.createEl('button', {
       cls: 'mod-cta np-push',
-      text: pending > 0 ? `↑ Push (${pending})` : '↑ Push',
+      text: toPush > 0 ? `↑ Push (${toPush})` : '↑ Push',
     });
-    push.disabled = !scan?.git.ready || pending === 0;
+    push.disabled = !scan?.git.ready || toPush === 0;
     if (scan && !scan.git.ready && scan.git.reason) push.title = scan.git.reason;
     push.onclick = () => void this.deps.review();
 

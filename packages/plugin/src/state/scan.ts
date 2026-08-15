@@ -45,6 +45,17 @@ export interface NoteEntry {
    * Stale would misdescribe why it needs re-staging.
    */
   danglingLinks: string[];
+  /**
+   * Whether this entry actually has something for the next push to carry.
+   *
+   * Deliberately a *git* question, not a status question. `removing` lasts from
+   * the moment the staged file is deleted until CI drops the KV key, which
+   * spans the push — so counting statuses made the Push button keep offering a
+   * removal that was already committed and pushed, and the review modal then
+   * correctly reported nothing to publish. The two disagreed because only one
+   * of them was asking git.
+   */
+  needsPush: boolean;
 }
 
 export interface ScanResult {
@@ -140,10 +151,15 @@ export async function scanVault(deps: ScanDeps): Promise<ScanResult> {
     }
 
     const repoPath = `${repoPublishedDir}/${shareId}.md`;
-    const pushed =
-      published.has(shareId) &&
-      !deps.gitState.dirty.has(repoPath) &&
-      !deps.gitState.unpushed.has(repoPath);
+    const uncommittedOrUnpushed =
+      deps.gitState.dirty.has(repoPath) || deps.gitState.unpushed.has(repoPath);
+
+    const pushed = published.has(shareId) && !uncommittedOrUnpushed;
+
+    // A pending file has not reached git at all yet — `.publish-pending/` is
+    // gitignored (§3.3), so git cannot see it and only the modal materializing
+    // it will put it in the tree.
+    const needsPush = pending.has(shareId) || uncommittedOrUnpushed;
 
     const detail = deriveStatus({
       shareId,
@@ -174,6 +190,7 @@ export async function scanVault(deps: ScanDeps): Promise<ScanResult> {
       localHash: local?.hash ?? null,
       assets: local?.assets ?? [],
       danglingLinks: (local?.noteLinks ?? []).filter((id) => !willBeLive.has(id)),
+      needsPush,
     });
   }
 
