@@ -368,11 +368,19 @@ export class Actions {
     return null;
   }
 
+  /**
+   * How many changes the next push will carry, for the "N change(s) waiting"
+   * notice.
+   *
+   * Asks git, via `needsPush`, for the same reason the Push button does: a
+   * `removing` entry stays `removing` until CI drops the KV key, so counting
+   * statuses kept already-pushed removals in the tally and told the user work
+   * was waiting when none was.
+   */
   private pendingCount(): number {
     const scan = this.deps.scan();
     if (!scan) return 0;
-    return scan.entries.filter((entry) => entry.status === 'staged' || entry.status === 'removing')
-      .length;
+    return scan.entries.filter((entry) => entry.needsPush).length;
   }
 
   private fail(options: { silent?: boolean }, issue: ValidationIssue): StageResult {

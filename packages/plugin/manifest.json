@@ -1,7 +1,7 @@
 {
   "id": "note-publisher",
   "name": "Note publisher",
-  "version": "1.3.3",
+  "version": "1.3.4",
   "minAppVersion": "1.5.0",
   "description": "Stage individual notes for publishing to your own unguessable public URLs, and see exactly what is live from inside Obsidian.",
   "author": "vault owner",
