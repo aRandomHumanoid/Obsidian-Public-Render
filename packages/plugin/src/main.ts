@@ -33,6 +33,13 @@ import { readFrontmatter } from './vault/frontmatter.js';
 
 
 
+
+/**
+ * How long an edit-triggered refresh may reuse the last remote state before
+ * asking the worker again. Explicit refreshes ignore this.
+ */
+export const REMOTE_MAX_AGE_MS = 10 * 60_000;
+
 export default class NotePublisherPlugin extends Plugin {
   /** `Plugin` declares `settings?: unknown`, so this narrows rather than adds. */
   override settings: PublisherSettings = { ...DEFAULT_SETTINGS, properties: { ...DEFAULT_SETTINGS.properties } };
@@ -43,6 +50,8 @@ export default class NotePublisherPlugin extends Plugin {
   private remote: RemoteState = emptyRemoteState();
   private statusBar: HTMLElement | null = null;
   private refreshing: Promise<void> | null = null;
+  /** A remote refresh was asked for while a local-only one was running. */
+  private remoteRefreshQueued = false;
   private postPushPolls = 0;
   private postPushTimer: number | null = null;
 
@@ -390,22 +399,44 @@ export default class NotePublisherPlugin extends Plugin {
     if (this.refreshTimer !== null) window.clearTimeout(this.refreshTimer);
     this.refreshTimer = window.setTimeout(() => {
       this.refreshTimer = null;
-      void this.refresh();
+      // Metadata 'resolved' fires on essentially every edit. Re-scanning the
+      // vault is free; re-asking the worker is not: without a manifest token
+      // every probe is a HEAD per note, and each HEAD cost the worker a KV
+      // `list`. Free-tier accounts get 1,000 lists a day, so ordinary typing
+      // exhausted the quota and broke the CI build that shares it. Edits now
+      // reuse the last remote state unless it has gone stale.
+      void this.refresh({ remote: 'if-stale' });
     }, 1500);
   }
 
-  async refresh(): Promise<void> {
-    if (this.refreshing) return this.refreshing;
-    this.refreshing = this.doRefresh().finally(() => {
+  /**
+   * Re-scan the vault and, by default, re-fetch what is live.
+   *
+   * `remote: 'if-stale'` reuses the cached remote state unless it is older
+   * than {@link REMOTE_MAX_AGE_MS}. Every explicit caller (startup, the panel's
+   * refresh button, actions, post-push polling) keeps the default and always
+   * asks the worker.
+   */
+  async refresh(opts: { remote?: 'always' | 'if-stale' } = {}): Promise<void> {
+    const remote = opts.remote ?? 'always';
+    if (this.refreshing) {
+      if (remote === 'always') this.remoteRefreshQueued = true;
+      return this.refreshing;
+    }
+    this.refreshing = this.doRefresh(remote).finally(() => {
       this.refreshing = null;
+      if (this.remoteRefreshQueued) {
+        this.remoteRefreshQueued = false;
+        void this.refresh();
+      }
     });
     return this.refreshing;
   }
 
-  private async doRefresh(): Promise<void> {
+  private async doRefresh(remote: 'always' | 'if-stale' = 'always'): Promise<void> {
     try {
       const gitState = await this.git.state();
-      this.lastScan = await this.buildScan(gitState);
+      this.lastScan = await this.buildScan(gitState, remote);
       this.updateStatusBar();
       for (const leaf of this.app.workspace.getLeavesOfType(PUBLISH_VIEW_TYPE)) {
         (leaf.view as PublishPanel).render();
@@ -415,9 +446,15 @@ export default class NotePublisherPlugin extends Plugin {
     }
   }
 
-  private async buildScan(gitState: GitState): Promise<ScanResult> {
-    const known = await this.knownShareIds();
-    this.remote = await fetchRemoteState(this.settings, known);
+  private async buildScan(
+    gitState: GitState,
+    remote: 'always' | 'if-stale' = 'always',
+  ): Promise<ScanResult> {
+    const stale = Date.now() - this.remote.fetchedAt > REMOTE_MAX_AGE_MS;
+    if (remote === 'always' || stale) {
+      const known = await this.knownShareIds();
+      this.remote = await fetchRemoteState(this.settings, known);
+    }
     return scanVault({
       app: this.app,
       settings: this.settings,

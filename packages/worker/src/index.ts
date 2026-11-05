@@ -128,15 +128,22 @@ async function handleManifest(request: Request, env: Env): Promise<Response> {
  * `GET|HEAD /n/:id` — a single KV read, wrapped in the page shell.
  *
  * HEAD is not merely GET-without-a-body: it is the plugin's no-token fallback
- * path (§3.5), so it answers from KV *key metadata* via a one-key `list` and
- * never reads the document value at all.
+ * path (§3.5), so it answers from KV *key metadata* via `getWithMetadata` and
+ * never parses the document value.
  */
 async function handleNote(request: Request, env: Env, id: string): Promise<Response> {
   if (request.method === 'HEAD') {
-    const listed = await env.NOTES.list<DocKeyMetadata>({ prefix: `doc:${id}`, limit: 1 });
-    const key = listed.keys.find((k) => k.name === `doc:${id}`);
-    if (!key) return notFound();
-    const meta = key.metadata;
+    // A keyed read, not a one-key `list`: lists are metered far more tightly
+    // than reads (1,000 vs 100,000 a day on the free plan) and the plugin sends
+    // one HEAD per note on every refresh, so `list` here exhausted the account
+    // quota and broke the CI build that shares it. The value is opened as a
+    // stream and cancelled unread, so this still never parses the document.
+    const { value, metadata: meta } = await env.NOTES.getWithMetadata<DocKeyMetadata>(
+      `doc:${id}`,
+      { type: 'stream', cacheTtl: 60 },
+    );
+    if (!value) return notFound();
+    await value.cancel();
     if (meta && meta.v > WORKER_MAX_SCHEMA_VERSION) return notFound();
     return new Response(null, {
       headers: pageHeaders({
