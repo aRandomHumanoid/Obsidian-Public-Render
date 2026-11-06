@@ -24,6 +24,16 @@ class FakeKV {
     return type === 'json' ? JSON.parse(entry.value) : entry.value;
   }
 
+  /** Stream reads only, which is all the HEAD path asks for. */
+  async getWithMetadata(
+    key: string,
+    _options?: { type?: string; cacheTtl?: number },
+  ): Promise<{ value: ReadableStream | null; metadata: DocKeyMetadata | null }> {
+    const entry = this.store.get(key);
+    if (!entry) return { value: null, metadata: null };
+    return { value: new Response(entry.value).body, metadata: entry.metadata ?? null };
+  }
+
   async list(options: { prefix?: string; limit?: number }): Promise<{
     keys: { name: string; metadata?: DocKeyMetadata }[];
     list_complete: boolean;
